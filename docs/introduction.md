@@ -29,6 +29,16 @@ data.get_instrument_list()
 ['CORN', 'LEANHOG', 'LIVECOW', 'SOYBEAN', 'WHEAT', 'KR10', 'KR3', 'BOBL', 'BTP', 'BUND', 'OAT', 'SHATZ', 'US10', 'US2', 'US20', 'US5', 'V2X', 'VIX', 'KOSPI', 'AEX', 'CAC', 'SMI', 'NASDAQ', 'SP500', 'AUD', 'EUR', 'GBP', 'JPY', 'MXP', 'NZD', 'COPPER', 'GOLD', 'PALLAD', 'PLAT', 'CRUDE_W', 'GAS_US', 'EDOLLAR', 'EUROSTX']
 ```
 
+Not all the instruments are easily identifiable
+
+```
+data.get_instrument_object_with_meta_data("MUMMY")
+```
+
+```
+futuresInstrumentWithMetaData(instrument=MUMMY, meta_data=instrumentMetaData(Description='TSE Mothers Index', Pointsize=1000.0, Currency='JPY', AssetClass='Equity', Slippage=0.5, PerBlock=50.0, Percentage=0.0, PerTrade=0.0))
+```
+
 And what kind of data can we get for them?
 
 ```python
@@ -171,6 +181,7 @@ account.weekly ## weekly returns (also daily [default], monthly, annual)
 account.gross.ann_mean() ## annual mean for gross returns, also costs (there are none in this simple example)
 ```
 
+[Here](notebooks/introduction_with_fxdata.ipynb) you can find a modified version of this example using IB data instead of pre-baked CSV data files.
 
 ## A simple system
 
@@ -335,6 +346,10 @@ Notice the differences from before:
 
 *Note if you'd passed the dict of trading rules into Rules()* **and** *into the config, only the former would be used*
 
+Why do we have this alternative method of specifying trading rules? Indeed why the option of using config at all. The answer it's that's a much more robust method for defining system behaviour than having pages of scripts defining how the system behaves. This is especially true in a production system. Why do we need an empty instance of Rules()? Well effectively we build our System object up from building blocks like Rules. These are usually just empty instances of a given class with no arguments passed, which are controlled by the contents of the configuration object also passed to system.
+ 
+So in a sense passing Rules(dict(....)) is not the normal behaviour, it's just sometimes nice to be able to do this so I allow it.
+
 Now these trading rules aren't producing forecasts that are correctly scaled (with an average absolute value of 10), and they don't have the cap of 20 that I recommend. To fix this we need to add another *stage* to our system: forecast scaling and capping.
 Stages are added by including extra objects in the list which is the first argument passed to `System`. The order of these doesn't matter.
 
@@ -344,7 +359,7 @@ We could estimate these on a rolling out of sample basis:
 from systems.forecast_scale_cap import ForecastScaleCap
 
 
-## By default we pool esimates across instruments. It's worth telling the system what instruments we want to use:
+## By default we pool estimates across instruments. It's worth telling the system what instruments we want to use:
 #
 my_config.instruments=["EDOLLAR", "US10", "CORN", "SP500_micro"]
 

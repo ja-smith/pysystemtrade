@@ -13,7 +13,16 @@ Related documents (which you should read before this one!):
 - [Storing futures and spot FX data](/docs/data.md)
 - [Connecting pysystemtrade to interactive brokers](/docs/IB.md)
 
+And documents you should read after this one:
+
+- [Instruments](/docs/instruments.md)
+- [Dashboard and monitor](/docs/dashboard_and_monitor.md)
+- [Production strategy changes](/docs/production_strategy_changes.md)
+
 *IMPORTANT: Make sure you know what you are doing. All financial trading offers the possibility of loss. Leveraged trading, such as futures trading, may result in you losing all your money, and still owing more. Backtested results are no guarantee of future performance. No warranty is offered or implied for this software. I can take no responsibility for any losses caused by live trading using pysystemtrade. Use at your own risk.*
+
+
+Created by [gh-md-toc](https://github.com/ekalinin/github-markdown-toc)
 
 Table of Contents
 =================
@@ -111,6 +120,10 @@ Table of Contents
       * [Manual check of FX price data](#manual-check-of-fx-price-data)
       * [Interactively modify capital values](#interactively-modify-capital-values)
       * [Interactively roll adjusted prices](#interactively-roll-adjusted-prices)
+         * [Manually input instrument codes and manually decide when to roll](#manually-input-instrument-codes-and-manually-decide-when-to-roll)
+         * [Cycle through instrument codes automatically, but manually decide when to roll](#cycle-through-instrument-codes-automatically-but-manually-decide-when-to-roll)
+         * [Cycle through instrument codes automatically, auto decide when to roll, manually confirm rolls](#cycle-through-instrument-codes-automatically-auto-decide-when-to-roll-manually-confirm-rolls)
+         * [Cycle through instrument codes automatically, auto decide when to roll, automatically roll](#cycle-through-instrument-codes-automatically-auto-decide-when-to-roll-automatically-roll)
    * [Menu driven interactive scripts](#menu-driven-interactive-scripts)
       * [Interactive controls](#interactive-controls)
          * [Trade limits](#trade-limits)
@@ -124,6 +137,7 @@ Table of Contents
             * [Mark as finished](#mark-as-finished)
             * [Mark all dead processes as finished](#mark-all-dead-processes-as-finished)
             * [View process configuration](#view-process-configuration)
+         * [Update configuration](#update-configuration)
       * [Interactive diagnostics](#interactive-diagnostics)
          * [Backtest objects](#backtest-objects)
             * [Output choice](#output-choice)
@@ -184,12 +198,13 @@ Table of Contents
       * [Configuring the scheduling](#configuring-the-scheduling)
          * [The crontab](#the-crontab)
          * [Process configuration](#process-configuration)
-      * [System monitor](#system-monitor)
+      * [System monitor and dashboard](#system-monitor-and-dashboard)
       * [Troubleshooting?](#troubleshooting)
 * [Production system concepts](#production-system-concepts)
    * [Configuration files](#configuration-files)
       * [System defaults &amp; Private config](#system-defaults--private-config)
       * [System backtest .yaml config file(s)](#system-backtest-yaml-config-files)
+      * [Control config files](#control-config-files)
       * [Broker and data source specific configuration files](#broker-and-data-source-specific-configuration-files)
       * [Only used when setting up the system](#only-used-when-setting-up-the-system)
    * [Capital](#capital)
@@ -208,16 +223,18 @@ Table of Contents
    * [General advice](#general-advice)
    * [Data recovery](#data-recovery)
 * [Reports](#reports-1)
-   * [Roll report (Daily)](#roll-report-daily)
-   * [P&amp;L report](#pl-report)
-   * [Status report](#status-report)
-   * [Trade report](#trade-report)
-   * [Reconcile report](#reconcile-report)
-   * [Strategy report](#strategy-report)
-   * [Risk report](#risk-report)
+   * [Dashboard](#dashboard)
+      * [Roll report (Daily)](#roll-report-daily)
+      * [P&amp;L report](#pl-report)
+      * [Status report](#status-report)
+      * [Trade report](#trade-report)
+      * [Reconcile report](#reconcile-report)
+      * [Strategy report](#strategy-report)
+      * [Risk report](#risk-report)
+      * [Liquidity report](#liquidity-report)
+      * [Costs report](#costs-report)
 
 Created by [gh-md-toc](https://github.com/ekalinin/github-markdown-toc)
-
 
 # Quick start guide
 
@@ -234,7 +251,7 @@ You need to:
 - Read this document very thoroughly!
 - Prerequisites:
     - Install [git](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git), install or update [python3](https://docs.python-guide.org/starting/install3/linux/). You may also find a simple text editor (like emacs) is useful for fine tuning, and if you are using a headless server then [x11vnc](http://www.karlrunge.com/x11vnc/) is helpful.
-    - Add the following environment variables to your .profile: (feel free to use other directories):
+    - Add the following environment variables to your `~/.profile`: (feel free to use other directories):
         - MONGO_DATA=/home/user_name/data/mongodb/
         - PYSYS_CODE=/home/user_name/pysystemtrade
         - SCRIPT_PATH=/home/user_name/pysystemtrade/sysproduction/linux/scripts
@@ -259,7 +276,8 @@ You need to:
     - [You must have a source of individual futures prices, then backfill them into the Arctic database](/docs/data.md#get_historical_data).
 - Roll calendars:
     - For *roll configuration* we need to initialise by running the code in this file [roll_parameters_csv_mongo.py](/sysinit/futures/roll_parameters_csv_mongo.py).
-    - [Create roll calendars for each instrument you are trading](/docs/data.md#roll-calendars).
+    - [Create roll calendars for each instrument you are trading](/docs/data.md#roll-calendars)
+- [Ensure you are sampling all the contracts you want to sample](#update-sampled-contracts-daily)
 - Adjusted futures prices:
     - [Create 'multiple prices' in Arctic](/docs/data.md#creating-and-storing-multiple-prices).
     - [Create adjusted prices in Arctic](/docs/data.md#creating-and-storing-back-adjusted-prices)
@@ -361,7 +379,7 @@ My own implementation runs on a Linux machine, and some of the implementation de
 ### Automation options
 
 You can run pysystemtrade as a fully automated system, which does everything from getting prices through to executing orders.
-If running fully automated, [IBC](https://github.com/IbcAlpha/IBC) is very useful. But other patterns make sense. In particular you may wish to do your trading manually, after pulling in prices and generating optimal positions manually. It will also possible to trade manually, but allow pysystemtrade to pick up your fills from the broker rather than entering them manually. or example, you might not trust the system (I wouldn't blame you), it gives you more control, you might think your execution is better than an algo, you might be doing some testing, or you simply want to use a broker that doesn't offer an API.
+If running fully automated, [IBC](https://github.com/IbcAlpha/IBC) is very useful. But other patterns make sense. In particular you may wish to do your trading manually, after pulling in prices and generating optimal positions manually. It will also possible to trade manually, but allow pysystemtrade to pick up your fills from the broker rather than entering them manually. For example, you might not trust the system (I wouldn't blame you), it gives you more control, you might think your execution is better than an algo, you might be doing some testing, or you simply want to use a broker that doesn't offer an API.
 
 I suggest the following:
 
@@ -584,7 +602,7 @@ mongorestore
 
 As I am super paranoid, I also like to output all my mongo_db data into .csv files, which I then regularly backup. This will allow a system recovery, should the mongo files be corrupted.
 
-This currently supports: FX, individual futures contract prices, multiple prices, adjusted prices, position data, historical trades, capital, contract meta-data, instrument data, optimal positions. Some other state information relating to the control of trading and processes is also stored in the database and this will be lost, however this can be recovered with a litle work: roll status, trade limits, position limits, and overrides. Log data will also be lost; but archived [echo files](#echos-stdout-output) could be searched if neccessary.
+This currently supports: FX, individual futures contract prices, multiple prices, adjusted prices, position data, historical trades, capital, contract meta-data, instrument data, optimal positions. Some other state information relating to the control of trading and processes is also stored in the database and this will be lost, however this can be recovered with a litle work: roll status, trade limits, position limits, and overrides. Log data will also be lost; but archived [echo files](#echos-stdout-output) could be searched if necessary.
 
 
 Linux script:
@@ -806,7 +824,7 @@ Once all the child orders of an order are completed, then a parent order can als
 # The journey of an order
 
 
-The most complex part of any trading system is the order management process. It is particularly complex in pysystemtrade, since it's designed to handle (in principal) some very complex types of trading strategy, and to trade multiple strategies. We also have the inherent complexity involved in trading futures. Let's look at the journey for a typical order. We'll consider the following:
+The most complex part of any trading system is the order management process. It is particularly complex in pysystemtrade, since it's designed to handle (in principle) some very complex types of trading strategy, and to trade multiple strategies. We also have the inherent complexity involved in trading futures. Let's look at the journey for a typical order. We'll consider the following:
 
 - A normal order in a trading system which does not trade spreads. This could involve passively rolling from one contract to the next.
 - A roll order which is a calendar spread (a FORCE roll)
@@ -819,8 +837,8 @@ The most complex part of any trading system is the order management process. It 
 
 When a backtest is run (regularly by run_systems, or an ad-hoc basis by update_system_backtests) it will generate a set of *optimal position rules* for each strategy/instrument combination. There is no fixed structure for optimal positions, but some examples could be:
 
-- A simple optimal position, eg trade until the position is +5 contracts
-- A buffered optimal position, eg position should be between +10.87 and +13.32 contracts. This is what is used in the default provided backtest systems.
+- A simple optimal position, eg trade until the position is +5 contracts. This used by the dynamic optimised trading system.
+- A buffered optimal position, eg position should be between +10.87 and +13.32 contracts. This is what is used in the default provided backtest 'static' systems.
 - A conditional optimal position, eg open a new buy if the price falls below this level, or close our current position if it goes above this level (which is what you'd use for mean reversion, with the addition of some stop orders). I plan to implement this kind of position management in a future trading system.
 
 Optimal positions exist because it's generally expensive to run backtests even when parameters are fixed rather than being estimated, as I recommend for production systems (it's possible to generate backtests that only use a limited amount of data, which speeds things up somewhat, but this is unsatisfying).
@@ -928,6 +946,8 @@ There are no significant differences, except that of course required positions w
 
 Overrides are applied before instrument orders are placed on the stack. They will take into account the desired trade, and the current position held.
 
+See the [instruments documentation](/docs/instruments.md) to understand more about overrides.
+
 
 ## Stack handler
 
@@ -943,7 +963,7 @@ If you are trading multiple strategies, and/or generating orders for a single st
 
 If the roll status is 'not rolling', then contract orders are generated from instrument orders by spawn_children_from_new_instrument_orders in the stack handler.
 
-For normal strategies when there is no rolling, there will just a single child contract order for each instrument order, trading in the current priced contract. Because it is a truth universally acknowledged that the contract order seeks to completely fufill the required instrument order (this isn't true for broker and contract orders, of which more later).
+For normal strategies when there is no rolling, there will just a single child contract order for each instrument order, trading in the current priced contract. Because it is a truth universally acknowledged that the contract order seeks to completely fulfill the required instrument order (this isn't true for broker and contract orders, of which more later).
 
 Fields for a new contract order (once added to the database):
 
@@ -1523,13 +1543,13 @@ See [capital](#capital) to understand how capital works. On a daily basis we nee
 
 Python:
 ```python
-from sysproduction.update_account_values
-update_account_values()
+from sysproduction.update_total_capital import update_total_capital
+update_total_capital()
 ```
 
 Linux script:
 ```
-. $SCRIPT_PATH/update_account_values
+. $SCRIPT_PATH/update_total_capital
 ```
 
 Called by: `run_capital_update`
@@ -1621,7 +1641,7 @@ Linux script:
 Called by: `run_strategy_order_generator`
 
 
-The code to run each strategies backtest is defined in the configuration parameter in the control_config.yaml file (or overriden in the private_control_config.yaml file): `process_configuration_methods/run_systems/strategy_name/`. For example:
+The code to run each strategy's backtest is defined in the configuration parameter in the control_config.yaml file (or overriden in the private_control_config.yaml file): `process_configuration_methods/run_systems/strategy_name/`. For example:
 
 
 ```
@@ -1631,7 +1651,7 @@ The code to run each strategies backtest is defined in the configuration paramet
       max_executions: 1
 ```
 
-- `object` the class of the code that generates the orders, eg `sysexecution.strategies.classic_buffered_positions.orderGeneratorForBufferedPositions`. This must provide a method `get_and_place_orders` (which it will, as long if the class inherits from `orderGeneratorForStrategy`)
+- `object` the class of the code that generates the orders, eg `sysexecution.strategies.classic_buffered_positions.orderGeneratorForBufferedPositions`. This must provide a method `get_and_place_orders` (which it will, as long as the class inherits from `orderGeneratorForStrategy`)
 
 The following optional parameters are used only by `run_strategy_order_generator`:
 - `max_executions` the number of times the generator should be run on each iteration of run_systems. Normally 1, unless you have some whacky intraday system. Can be omitted.
@@ -1767,6 +1787,17 @@ Linux script:
 . $SCRIPT_PATH/interactive_update_roll_status
 ```
 
+There are four different modes that this can be run in:
+
+- Manually input instrument codes and manually decide when to roll
+- Cycle through instrument codes automatically, but manually decide when to roll
+- Cycle through instrument codes automatically, auto decide when to roll, manually confirm rolls
+- Cycle through instrument codes automatically, auto decide when to roll, automatically roll
+
+#### Manually input instrument codes and manually decide when to roll
+
+You enter the instrument code you wish to think about rolling.
+
 The first thing the process will do is create and print a roll report. See the [roll report](#roll-report-daily) for more information on how to interpret the information shown. You will then have the option of switching between roll modes. Not all modes will be allowed, depending on the current positions that you are holding and the current roll state.
 
 The possible options are:
@@ -1775,8 +1806,30 @@ The possible options are:
 - Passive. This will tactically reduce positions in the priced contract, and open new positions in the forward contract.
 - Force. This will pause all normal trading in the relevant instrument, and the stack handler will create a calendar spread trade to roll from the priced to the forward contract.
 - Force legs. This will pause all normal trading, and create two outright trades (closing the priced contract position, opening a forward position).
-- Roll adjusted. This is only possible if you have no positions in the current price contract. It will create a new adjusted and multiple price series, hence the current forward contract will become the new priced contract (and everything else will shift accordingly).
+- Roll adjusted. This is only possible if you have no positions in the current price contract. It will create a new adjusted and multiple price series, hence the current forward contract will become the new priced contract (and everything else will shift accordingly). Adjusted price changes are manually confirmed before writing to the database.
 
+Once you've updated the roll status you have the option of choosing another instrument, or aborting.
+
+#### Cycle through instrument codes automatically, but manually decide when to roll
+
+This chooses a subset of instruments that are expiring soon. You will be prompted for the number of days ahead you want to look for expiries. This then behaves exactly like the manual option above, except it automatically cycles through the relevant subset of instruments.
+
+#### Cycle through instrument codes automatically, auto decide when to roll, manually confirm rolls
+
+Again this will first choose a subset of instruments that are expiring soon. What happens next will depend on the parameters you have decided upon:
+
+- If the volume in the forward contract is less than the required relative volume, we do nothing
+- If the relative volume is fine and you have no position in the priced contract, then we automatically decide to roll adjusted prices
+- If the relative volume is fine and you have a position in the priced contract, and you have asked to manually input the required state on a case by case basis: that's what will happen
+- If the relative volume is fine and you have a position in the priced contract, and you have NOT asked to manually input the required state, then the state will automatically be changed to one of passive, force, or force leg (as selected). I strongly recommend using Passive rolling here, and then manually changing individual instruments if required.
+
+If a decision is made to roll adjusted prices, you will be asked to confirm you are happy with the prices changes before they are written to the database.
+
+I recommend that you run a roll report after doing this to see what state things are in.
+
+#### Cycle through instrument codes automatically, auto decide when to roll, automatically roll
+
+This is exactly like the previous option, except that if a decision is made to roll adjusted prices, this will happen automatically without user confirmation.
 
 ## Menu driven interactive scripts
 
@@ -1805,7 +1858,7 @@ Linux script:
 
 #### Trade limits
 
-We can set limits for the maximum number of trades we will done over a given period, and for a specific instrument, or a specific instrument within a given strategy. Limits are applied within run_stack_handler whenever a broker order is about to be generated from a contract order. Options are as follows:
+We can set limits for the maximum number of trades we will do over a given period, and for a specific instrument, or a specific instrument within a given strategy. Limits are applied within run_stack_handler whenever a broker order is about to be generated from a contract order. Options are as follows:
 
 - View limits
 - Change limits (instrument, instrument & strategy)
@@ -1824,6 +1877,7 @@ We can set the maximum allowable position that can be held in a given instrument
 
 Autopopulate uses current levels of risk to estimate the appropriate position limit. So it will make position limits smaller when risk is higher, and vice versa. It makes a lot of assumptions when setting limits: that all your strategies have the same risk limit (which you can set), and the same IDM (also can be modified), and that all instruments have the same instrument weight (which you can set). It does not use actual instrument weights, and it only sets limits that are global for a particular instrument.
 
+The dynamic optimisation strategy will also use position limits in it's optimisation in production (not in backtests, since fixed position limits make no sense for a historical backtest).
 
 #### Trade control / override
 
@@ -1833,11 +1887,14 @@ Overrides allow us to reduce positions for a given strategy, for a given instrum
 - a flag, allowing us only to submit trades which reduce our positions
 - a flag, allowing no trading to occur in the given instrument.
 
+Overrides are also set as a result of configured information about different instruments; see the [instruments documentation](/docs/instruments.md) for more detail.
+
 Instrument trades will be modified to achieve any required override effect (this occurs when run_strategy_order_generator is run). We can:
 
 - View overrides
 - Update / add / remove overide (for strategy, instrument, or instrument & strategy)
 
+See the [instruments documentation](instruments.md) for more discussion on overrides.
 
 #### Broker client IDs
 
@@ -1855,7 +1912,7 @@ See [scheduling](#pysystemtrade-scheduling).
 Here's an example of the relevant output, start/end times, currently running, status, and PID (process ID).
 
 ```
-un_capital_update            : Last started 2020-12-08 15:56:32.323000 Last ended status 2020-12-08 14:31:46.601000 GO      PID 63652.0    is running
+run_capital_update            : Last started 2020-12-08 15:56:32.323000 Last ended status 2020-12-08 14:31:46.601000 GO      PID 63652.0    is running
 run_daily_prices_updates      : Last started 2020-12-08 12:36:04.850000 Last ended status 2020-12-08 13:54:47.885000 GO      PID None       is not running
 run_systems                   : Last started 2020-12-08 14:10:30.485000 Last ended status 2020-12-08 14:42:40.945000 GO      PID None       is not running
 run_strategy_order_generator  : Last started 2020-12-08 14:46:28.013000 Last ended status 2020-12-08 14:49:44.081000 GO      PID None       is not running
@@ -1865,7 +1922,7 @@ run_cleaners                  : Last started 2020-12-08 14:51:19.380000 Last end
 run_backups                   : Last started 2020-12-08 14:54:04.856000 Last ended status 2020-12-08 00:05:48.444000 GO      PID 61604.0    is running
 ```
 
-You can use the PID to check using the Linux command line eg `ps aux | grep 86140` if a process really is running (in this case I'm checking if run_capital_update really is still going), or if it's abnormally aborted (in which case you will need to change it to 'not running' before relaunching - see below). This is also done automatically by the monitor function (see [scheduling](#pysystemtrade-scheduling)).
+You can use the PID to check using the Linux command line eg `ps aux | grep 86140` if a process really is running (in this case I'm checking if run_capital_update really is still going), or if it's abnormally aborted (in which case you will need to change it to 'not running' before relaunching - see below). This is also done automatically by the [system monitor and/or dashboard](/docs/dashboard_and_monitor.md), if running.
 
 Note that processes that have launched but waiting to properly start (perhaps because it is not their scheduled start time, or because another process has not yet started) will be shown as not running and will have no PID registered. You can safely kill them.
 
@@ -1890,11 +1947,19 @@ Note that the startup script will also mark all processes as finished (as there 
 
 #####  Mark all dead processes as finished
 
-This will check to see if a process PID is active, and if not it will mark a process as finished, assumed crashed. This is also done periodically by the system monitor.
+This will check to see if a process PID is active, and if not it will mark a process as finished, assumed crashed. This is also done periodically by the [system monitor and/or dashboard](/docs/dashboard_and_monitor.md), if running.
 
 #####  View process configuration
 
 This allows you to see the configuration for each process, either from `control_config.yaml` or the `private_control_config.yaml` file. See [scheduling](#pysystemtrade-scheduling).
+
+#### Update configuration
+
+These options allow you to update, or suggest how to update, the instrument configuration as discussed [here](/docs/instruments.md).
+
+- Auto update spread cost configuration based on sampling and trades
+- Suggest 'bad' markets (illiquid or costly)
+- Suggest which duplicate market to use
 
 
 ### Interactive diagnostics
@@ -2112,7 +2177,7 @@ The complexity of the order stacks is there for a reason; it allows different ki
 
 ##### Lock/unlock order
 
-There is a 'lock' in the order database, basically an explicit flag preventing the order from being modified. Certain operations which span multiple data tables will impose locks first so the commit does not partially fail (I'm using noSQL so there is no explicit cross table commit available). If operations fail mid lock they will usually try and fall back and remove locks, but this doesn't always work out. So it sometimes neccessary to manually unlock orders, and for symmettry manually lock them.
+There is a 'lock' in the order database, basically an explicit flag preventing the order from being modified. Certain operations which span multiple data tables will impose locks first so the commit does not partially fail (I'm using noSQL so there is no explicit cross table commit available). If operations fail mid lock they will usually try and fall back and remove locks, but this doesn't always work out. So it sometimes necessary to manually unlock orders, and for symmettry manually lock them.
 
 
 ##### Lock/unlock instrument code
@@ -2347,7 +2412,7 @@ You can use python itself as a scheduler, using something like [this](https://gi
 
 ### Manual system
 
-It's possible to run pysystemtrade without any scheduling, by manually starting the neccessary processes as required. This option might make sense for traders who are not running a fully automated system (though [you may want to keep most of the scheduling running anyway](#automation-options)).
+It's possible to run pysystemtrade without any scheduling, by manually starting the necessary processes as required. This option might make sense for traders who are not running a fully automated system (though [you may want to keep most of the scheduling running anyway](#automation-options)).
 
 ### Hybrid of python and cron
 
@@ -2517,33 +2582,9 @@ process_configuration_methods:
       max_executions: 1
 ```
 
-### System monitor
+### System monitor and dashboard
 
-It can be hard to keep track of what's going on, so I added a simple monitoring tool which outputs an .html file. To use it, add the following to your crontab:
-
-```
-@reboot             cd ~pysystemtrade/private/; python3 -m http.server
-@reboot             cd ~pysystemtrade/syscontrol/; python3 monitor.py
-```
-
-Once your machine has started you should be able to go to `http://192.168.1.13:8000/` (change the IP address as required) on any LAN connected machine and see the status of the system.
-
-Whilst running the monitor will also handle any 'crashed' processes (those where the PID that is registered is killed without the process being properly finished); it will email the user, update the web log, and mark the process as finished so it can be run again. **It will not automatically respawn the processes!** (you will have to do that manually or wait until the crontab does so the next day).
-
-You may prefer to run your monitor from another machine. To do this on the trading server (the machine that is being monitored), assuming that is also the machine that is hosting your mongoDB instance:
-
-- Add an ip address to the `bind_ip` line in the `/etc/mongod.conf` file to allow connections from other machines `eg bind_ip=localhost, 192.168.0.10` or change your call to mongodb `mongod --dbpath /home/rob/data/mongodb --bind_ip_all` (**warning, insecure unless you have other security eg firewall**).
-- You may need to change your firewall settings, either UFW (`sudo ufw enable`, `sudo ufw allow 27017 from 192.168.0.10`) or iptables
-- set up ssh so that it does not require password login, only ssh-key (**again, has security implications so make sure you know what you are doing!**)
-
-Then on the monitoring machine:
-
-- you will need to modify the `private_config.yaml` system configuration file so it connects to a different IP address `mongo_host: 192.168.0.13`
-- add the following to your `private_config.yaml` file
-
-`trading_server_ip: 192.168.0.121`
-`trading_server_username: 'rob'`
-`trading_server_ssh_port: 22` (optional, defaults to port 22)
+There is a crude monitoring tool, and a more sophisticated fancy dashboard, which you can use to monitor what the system is up to. [Read the doc file here.](/docs/dashboard_and_monitor.md)
 
 
 ### Troubleshooting?
@@ -2579,9 +2620,12 @@ Configuration for the system is spread across a few different places:
 
 - System defaults
 - Private config (which overrides the system defaults)
-- Backtest config
+- Backtest config (which overrides the system defaults)
+- Control configs: private and default
 - Broker and data source specific config
 - Initialisation config
+
+This ignores any control config
 
 ### System defaults & Private config
 
@@ -2647,6 +2691,15 @@ The following are configuration options that are in defaults.yaml and can be ove
 
 See the [user guide for backtesting](/docs/backtesting.md).
 
+The interaction of system, private, and backtest configs can be a bit confusing. Inside a backtest (which can either be in production or sim mode), configuration options will be pulled in the following priority (1) specific backtest .yaml configuration, (2) private_config.yaml *in production only*, (3) defaults.yaml file. 
+
+Outside of the backtest code, in production configuration options are pulled in the following priority order: (1) private_config.yaml *in production only*, (2) defaults.yaml file. *The production code can't see inside your backtest configuration files*. 
+
+
+### Control config files
+
+As discussed above, these are used purely for control and monitoring purposes in [/syscontrol/control_config.yaml](/syscontrol/control_config.yaml), overriden by /private/private_control_config.yaml).
+
 ### Broker and data source specific configuration files
 
 The following are configurations mainly for mapping from our codes to broker codes:
@@ -2661,6 +2714,7 @@ The following are configurations used when initialising the database with it's i
 
 - [/sysinit/futures/config/rollconfig.csv](/data/futures/csvconfig/rollconfig.csv)
 - [/data/futures/csvconfig/instrumentconfig.csv](/data/futures/csvconfig/instrumentconfig.csv) (though this may be used by the simulation environment)
+
 
 
 
@@ -2832,11 +2886,10 @@ Example [here](/sysproduction/strategy_code/report_system_classic.py).
 Here's some general advice about recovering from a crash:
 
 - If you're not using IBC restart the IB Gateway; and if you are check it has started ok
-- Temporarily turn off the crontab to stop processes from spawning before you are reading
+- Temporarily turn off the crontab to stop processes from spawning before you are ready
 - Check you have a mongoDB instance running okay
-
 - Run a full set of reports, and carefully check them, especially the status and reconcile reports, to see that all is well.
-- If neccessary take steps to recover data (see next section). 
+- If necessary take steps to recover data (see next section). 
 - If this goes well you will have an empty order stack. Run update_strategy_orders to repopulate it.
 - You should turn the crontab back on when everything is working fine
 - Processes are started by the scheduler, eg Cron, you will need to start them manually if their normal start time has passed (I find [linux screen](https://linuxize.com/post/how-to-use-linux-screen/) helpful for this on my headless server). Everything should work normally the following day.
@@ -2845,9 +2898,9 @@ Here's some general advice about recovering from a crash:
 
 ## Data recovery
 
-Let's first consider an awful case where your mongo DB is corrupted, and the backups are also corrupted. In this case you can use the backed up .csv database dump files to recover the following: FX, individual futures contract prices, multiple prices, adjusted prices, position data, historical trades, capital, contract meta-data, instrument data, optimal positions. Note that scripts don't neccessarily exist to do all this automatically yet FIX ME TO DO.
+Let's first consider an awful case where your mongo DB is corrupted, and the backups are also corrupted. In this case you can use the backed up .csv database dump files to recover the following: FX, individual futures contract prices, multiple prices, adjusted prices, position data, historical trades, capital, contract meta-data, instrument data, optimal positions. Note that scripts don't necessarily exist to do all this automatically yet FIX ME TO DO.
 
-Some other state information relating to the control of trading and processes is also stored in the database and this will be lost, however this can be recovered with a litle work: roll status, trade limits, position limits, and overrides. Log data will also be lost; but archived [echo files](#echos-stdout-output) could be searched if neccessary.
+Some other state information relating to the control of trading and processes is also stored in the database and this will be lost, however this can be recovered with a litle work: roll status, trade limits, position limits, and overrides. Log data will also be lost; but archived [echo files](#echos-stdout-output) could be searched if necessary.
 
 The better case is when the mongo DB is fine. In this case (once you've [restored](#mongo-data) it) you will have only lost everything from your last nightly backup onwards. Here is what you do to get it back (if possible)
 
@@ -2868,7 +2921,9 @@ The better case is when the mongo DB is fine. In this case (once you've [restore
 
 # Reports
 
+## Dashboard
 
+A lot of the information in the reports described below can also be found in the [Web Dashboard](/docs/dashboard_and_monitor.md)
 
 ### Roll report (Daily)
 
@@ -2881,12 +2936,15 @@ The roll report can be run for all markets (default for the email), or for a sin
 
 "The roll report gives you all the information you need to decide when to roll from one futures contract to the next"
 
-=============================================
-       Status and time to roll in days       
-=============================================
 
-          Status  Roll_exp  Prc_exp  Crry_exp
-EDOLLAR  Passive      -128      972       874
+============================================================================================================================================
+                                                      Status and time to roll in days                                                       
+============================================================================================================================================
+
+                        status roll_expiry price_expiry carry_expiry contract_priced contract_fwd position_priced volume_priced   volume_fwd
+EDOLLAR                Passive        -143          957          866        20240600     20240900               2             1     0.853933
+GAS_US_mini            No_Roll         -14           21           55        20211200     20220100              -2             1    0.0949909
+BRENT-LAST             Passive         -13           27           -5        20220100     20220200               1             1    0.0907098
 
 Roll_exp is days until preferred roll set by roll parameters. Prc_exp is days until price contract expires, Crry_exp is days until carry contract expires
 
@@ -2897,35 +2955,9 @@ assuming that there is enough liquidity, or carry calculations will become stale
 Suggested times to roll before an expiry are shown, and these are used in the backtest to generate
 historical roll dates, but you do not need to treat these as gospel in live trading"
 
-========================================================
-                   List of contracts                    
-========================================================
+"contract priced/contract forward This shows the contracts we're currently primarily trading (price), and will trade next (forward)"
 
-                C0         C1         C2        C3 C4 C5
-EDOLLAR  20230300c  20230600p  20230900f  20231200      
-
-Suffix: p=price, f=forward, c=carry
-
-"This shows the contracts we're currently primarily trading (price), will trade next (forward),
- and are using for carry calculation (carry). Other contracts may also be shown."
-
-===========================================
-                 Positions                 
-===========================================
-
-         Pos0  Pos1  Pos2  Pos3  Pos4  Pos5
-EDOLLAR   0.0   0.0  11.0   0.0   0.0   0.0
-
-
-"The position we have in each contract. Here we are long 11 futures lots in the second contract
- (which from above is 202309: the forward contract)."
-
-========================================
-            Relative volumes            
-========================================
-
-           V0    V1    V2   V3   V4   V5
-EDOLLAR  0.98  0.82  0.88  1.0  0.0  0.0
+"The position we have in the priced contract"
 
 Contract volumes over recent days, normalised so largest volume is 1.0
 

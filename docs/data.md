@@ -17,6 +17,8 @@ Table of Contents
    * [Setting up some instrument configuration](#setting-up-some-instrument-configuration)
    * [Roll parameter configuration](#roll-parameter-configuration)
    * [Getting historical data for individual futures contracts](#getting-historical-data-for-individual-futures-contracts)
+      * [Getting data from the broker (Interactive brokers)](#getting-data-from-the-broker-interactive-brokers)
+      * [Getting data from an external data source (Barchart)](#getting-data-from-an-external-data-source-barchart)
    * [Roll calendars](#roll-calendars)
       * [Generate a roll calendar from actual futures prices](#generate-a-roll-calendar-from-actual-futures-prices)
          * [Calculate the roll calendar](#calculate-the-roll-calendar)
@@ -27,7 +29,7 @@ Table of Contents
    * [Creating and storing multiple prices](#creating-and-storing-multiple-prices)
       * [Creating multiple prices from contract prices](#creating-multiple-prices-from-contract-prices)
       * [Writing multiple prices from .csv to database](#writing-multiple-prices-from-csv-to-database)
-      * [Updating shipped multiple prices](#update-shipped-data)
+      * [Updating shipped multiple prices](#updating-shipped-multiple-prices)
    * [Creating and storing back adjusted prices](#creating-and-storing-back-adjusted-prices)
       * [Changing the stitching method](#changing-the-stitching-method)
    * [Getting and storing FX data](#getting-and-storing-fx-data)
@@ -69,6 +71,7 @@ Table of Contents
          * [Getting data from another source](#getting-data-from-another-source)
    * [Production interface](#production-interface)
 
+
 Created by [gh-md-toc](https://github.com/ekalinin/github-markdown-toc)
 
 
@@ -97,13 +100,13 @@ In general each step relies on the previous step to work; more formally:
 Before we start, another note: Confusingly, data can be stored or come from various places, which include: 
 
 1. .csv files containing data that pysystemtrade is shipped with (stored in [this set of directories](/data/futures/)); it includes everything above except for roll parameters, and is periodically updated from my own live data. Any .csv data 'pipeline' object defaults to using this data set.
-2. configuration .csv files used to iniatilise the system, such as [this file](/data/futures/csvconfig/instrumentconfig.csv)
+2. configuration .csv files used to initialise the system, such as [this file](/data/futures/csvconfig/instrumentconfig.csv)
 3. Temporary .csv files created in the process of initialising the databases
 4. Backup .csv files, created by the production system.
 5. External sources such as our broker, or data providers like Barchart and Quandl
 6. Mongo DB or other databases
 
-It's important to be clear where data is coming from, and where it is going to, during the intialisation process. Once we're actually running, the main storage will usually be in mongo DB (for production and possibly simulation).
+It's important to be clear where data is coming from, and where it is going to, during the initialisation process. Once we're actually running, the main storage will usually be in mongo DB (for production and possibly simulation).
 
 For simulation we could just use the provided .csv files (1), and this is the default for how the backtesting part of pysystemtrade works, since you probably don't want to start down the road of building up your data stack before you've even tested out any ideas. I don't advise using .csv files for production - it won't work. As we'll see later, you can use mongoDB data for simulation and production.
 
@@ -121,7 +124,7 @@ Because of this it's possible at (almost) every stage to store data in either .c
 <a name="set_up_instrument_config"></a>
 ## Setting up some instrument configuration
 
-The first step is to store some instrument configuration information. In principal this can be done in any way, but we are going to *read* from .csv files, and *write* to a [Mongo Database](https://www.mongodb.com/). There are two kinds of configuration; instrument configuration and roll configuration. Instrument configuration consists of static information that enables us to trade an instrument like EDOLLAR: the asset class, futures contract point size, and traded currency (it also includes cost levels, that are required in the simulation environment).
+The first step is to store some instrument configuration information. In principle this can be done in any way, but we are going to *read* from .csv files, and *write* to a [Mongo Database](https://www.mongodb.com/). There are two kinds of configuration; instrument configuration and roll configuration. Instrument configuration consists of static information that enables us to trade an instrument like EDOLLAR: the asset class, futures contract point size, and traded currency (it also includes cost levels, that are required in the simulation environment).
 
 The relevant script to setup *information configuration* is in sysinit - the part of pysystemtrade used to initialise a new system. Here is the script you need to run [instruments_csv_mongo.py](/sysinit/futures/instruments_csv_mongo.py). Notice it uses two types of data objects: the object we write to [`mongoFuturesInstrumentData`](#mongoFuturesInstrumentData) and the object we read from [`csvFuturesInstrumentData`](#csvFuturesInstrumentData). These objects both inherit from the more generic futuresInstrumentData, and are specialist versions of that. You'll see this pattern again and again, and I describe it further in [part two of this document](#storing_futures_data). 
 
@@ -155,7 +158,7 @@ Let's take a more extreme example, Eurodollar. The ExpiryOffset is 18, and the r
 
 Now let's turn our attention to getting prices for individual futures contracts. 
 
-This step is neccessary if you're going to run production code or you want newer data, newer than the data that is shipped by default. If you just want to run backtests,  but with data in a database rather than .csv, and you're not bothered about using old data, you can skip ahead to [multiple prices](#mult_adj_csv_to_arctic).
+This step is necessary if you're going to run production code or you want newer data, newer than the data that is shipped by default. If you just want to run backtests,  but with data in a database rather than .csv, and you're not bothered about using old data, you can skip ahead to [multiple prices](#mult_adj_csv_to_arctic).
 
 ### Getting data from the broker (Interactive brokers)
 
@@ -169,7 +172,7 @@ We could get this from anywhere, but I'm going to use Barchart. As you'll see, t
 
 (Don't get data from both Barchart and IB. If you get the IB data first, the Barchart code will overwrite it. If you get the Barchart data first, the IB data won't be written.)
 
-Once we have the data we can also store it, in principal, anywhere but I will be using the open source [Arctic library](https://github.com/manahl/arctic) which was released by my former employers [AHL](https://www.ahl.com). This sits on top of Mongo DB (so we don't need yet another database) but provides straightforward and fast storage of pandas DataFrames. Once we have the data we can also copy it to .csv files.
+Once we have the data we can also store it, in principle, anywhere but I will be using the open source [Arctic library](https://github.com/manahl/arctic) which was released by my former employers [AHL](https://www.ahl.com). This sits on top of Mongo DB (so we don't need yet another database) but provides straightforward and fast storage of pandas DataFrames. Once we have the data we can also copy it to .csv files.
 
 By the way I can't just pull down this data myself and put it on github to save you time. Storing large amounts of data in github isn't a good idea regardless of whether it is in .csv or Mongo files, and there would also be licensing issues with me basically just copying and pasting raw data that belongs to someone else. You have to get, and then store, this stuff yourself. And of course at some point in a live system you would be updating this yourself.
 
@@ -346,7 +349,7 @@ The script should be reasonably self explanatory in terms of data pipelines, but
 
 1. Get the roll calendars from `csv_roll_data_path` (which defaults to [this](/data/futures/roll_calendars_csv), so make sure you change it if you followed my advice to store your roll calendars somewhere else more temporary), which we have spent so much time and energy creating.
 2. Get some closing prices for each individual future (we don't use OHLC data in the multiple and adjusted prices stage).
-3. Optionally but recommended: adjust the roll calendar so it aligns to the closing prices. This isn't strictly neccessary if you've used method 1 above, deriving the calendar from individual futures contract prices. But it is if you've used methods 2 or 3, and strongly advisable if you've done any manual hacking of the roll calendar files. 
+3. Optionally but recommended: adjust the roll calendar so it aligns to the closing prices. This isn't strictly necessary if you've used method 1 above, deriving the calendar from individual futures contract prices. But it is if you've used methods 2 or 3, and strongly advisable if you've done any manual hacking of the roll calendar files. 
 4. Add a 'phantom' roll a week in the future. Otherwise the data won't be complete up the present day. This will fix itself the first time you run the live production code to update prices, but some people find it annoying.
 5. Create the multiple prices; basically stitching together contract data for different roll periods. 
 6. Depending on flags, write the multiple prices data to`csv_multiple_data_path` (which defaults to [this](/data/futures/multiple_prices_csv)) and / or to Arctic. I like to write to both: Arctic for production, .csv as a backup and sometimes I prefer to use that for backtesting.
@@ -471,6 +474,17 @@ data.get_fx_prices("GBPUSD")
 Save the files in a directory with no other content, using the filename format "GBPUSD.csv". Using [this simple script](/sysinit/futures/spotfx_from_csvAndInvestingDotCom_to_arctic.py) they are written to Arctic and/or .csv files. You will need to modify the script to point to the right directory, and you can also change the column and formatting parameters to use data from other sources.
 
 You can also run the script with `ADD_EXTRA_DATA = False, ADD_TO_CSV = True`. Then it will just do a straight copy from provided .csv data to Arctic. Your data will be stale, but in production it will automatically be updated with data from IB (as long as the provided data isn't more than a year out of date, since IB will give you only a year of daily prices).
+
+
+## Updating the data
+
+If you want your data to update:
+
+- [Ensure you are sampling all the contracts you want to sample](/docs/production.md#update-sampled-contracts-daily)
+- [Update the individual contract data]/docs/production.md#update-futures-contract-historical-price-data-daily)
+- [Update multiple and adjusted prices](/docs/production.md#update-multiple-and-adjusted-prices-daily)
+
+These will be run daily if you're using the pysystemtrade production environment, and have set your [scheduler](/docs/production.md#scheduling) up to do `run_daily_price_updates`. But it's worth running them manually just the once (in the above order), especially after you've added data for a new market.
 
 
 ## Finished!
@@ -924,7 +938,7 @@ For futures simData objects need to know the source of:
 - spot FX prices
 - instrument configuration and cost information
 
-Direct access to other kinds of information isn't neccessary for simulations.
+Direct access to other kinds of information isn't necessary for simulations.
 
 ### Provided simData objects
 
@@ -971,7 +985,7 @@ Configuration information about futures instruments is stored in a number of dif
 - Roll configuration information in [this .csv file](/data/futures/csvconfig/rollconfig.csv), which will be copied to Mongo DB with [this script](/sysinit/futures/roll_parameters_csv_mongo.py)
 - Interactive brokers configuration in [this file](/sysbrokers/IB/ib_config_spot_FX.csv) and [this file](/sysbrokers/IB/ib_config_futures.csv).
 
-The instruments in these lists won't neccessarily match up, however under the principal of DRY there shouldn't be duplicated column headings across files.
+The instruments in these lists won't necessarily match up, however under the principle of DRY there shouldn't be duplicated column headings across files.
 
 The `system.get_instrument_list()` method is used by the simulation to decide which markets to trade; if no explicit list of instruments is included then it will fall back on the method `system.data.get_instrument_list()`. In both the provided simData objects this will resolve to the method `get_instrument_list` in the class which gets back adjusted prices, or in whatever overrides it for a given data source (.csv or Mongo DB). In practice this means it's okay if your instrument configuration (or roll configuration, when used) is a superset of the instruments you have adjusted prices for. But it's not okay if you have adjusted prices for an instrument, but no configuration information.
 

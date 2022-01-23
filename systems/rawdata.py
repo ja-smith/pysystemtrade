@@ -5,12 +5,14 @@ import pandas as pd
 from systems.stage import SystemStage
 from syscore.objects import resolve_function
 from syscore.dateutils import ROOT_BDAYS_INYEAR
+from syscore.pdutils import prices_to_daily_prices
 from systems.system_cache import input, diagnostic, output
 
 from sysdata.sim.futures_sim_data import futuresSimData
 from sysdata.config.configdata import Config
 
 from sysobjects.carry_data import rawCarryData
+
 
 class RawData(SystemStage):
     """
@@ -57,6 +59,12 @@ class RawData(SystemStage):
         )
         dailyprice = self.data_stage.daily_prices(instrument_code)
 
+        if len(dailyprice) == 0:
+            raise Exception(
+                "Data for %s not found! Remove from instrument list, or add to config.ignore_instruments"
+                % instrument_code
+            )
+
         return dailyprice
 
     @input
@@ -68,6 +76,11 @@ class RawData(SystemStage):
 
         natural_prices = self.data_stage.get_raw_price(instrument_code)
 
+        if len(natural_prices) == 0:
+            raise Exception(
+                "Data for %s not found! Remove from instrument list, or add to config.ignore_instruments"
+            )
+
         return natural_prices
 
     @input
@@ -77,7 +90,6 @@ class RawData(SystemStage):
         hourly_prices = raw_prices.resample("1H").last()
 
         return hourly_prices
-
 
     @output()
     def daily_returns(self, instrument_code: str) -> pd.Series:
@@ -104,6 +116,12 @@ class RawData(SystemStage):
         dailyreturns = instrdailyprice.diff()
 
         return dailyreturns
+
+    @output()
+    def annualised_returns_volatility(self, instrument_code: str) -> pd.Series:
+        daily_returns_volatility = self.daily_returns_volatility(instrument_code)
+
+        return daily_returns_volatility * ROOT_BDAYS_INYEAR
 
     @output()
     def daily_returns_volatility(self, instrument_code: str) -> pd.Series:
@@ -253,7 +271,9 @@ class RawData(SystemStage):
         return norm_return
 
     @diagnostic()
-    def get_cumulative_daily_vol_normalised_returns(self, instrument_code: str) -> pd.Series:
+    def get_cumulative_daily_vol_normalised_returns(
+        self, instrument_code: str
+    ) -> pd.Series:
         """
         Returns a cumulative normalised return. This is like a price, but with equal expected vol
         Used for a few different trading rules
@@ -263,8 +283,9 @@ class RawData(SystemStage):
         """
 
         self.log.msg(
-            "Calculating cumulative normalised return for %s" %
-            instrument_code, instrument_code=instrument_code, )
+            "Calculating cumulative normalised return for %s" % instrument_code,
+            instrument_code=instrument_code,
+        )
 
         norm_returns = self.get_daily_vol_normalised_returns(instrument_code)
 
@@ -273,7 +294,9 @@ class RawData(SystemStage):
         return cum_norm_returns
 
     @diagnostic()
-    def _aggregate_daily_vol_normalised_returns_for_asset_class(self, asset_class: str) -> pd.Series:
+    def _aggregate_daily_vol_normalised_returns_for_list_of_instruments(
+        self, list_of_instruments: list
+    ) -> pd.Series:
         """
         Average normalised returns across an asset class
 
@@ -281,26 +304,37 @@ class RawData(SystemStage):
         :return: pd.Series
         """
 
-        instruments_in_asset_class = self.data_stage.all_instruments_in_asset_class(
-            asset_class)
-
-        aggregate_returns_across_asset_class = [
+        aggregate_returns_across_instruments_list = [
             self.get_daily_vol_normalised_returns(instrument_code)
-            for instrument_code in instruments_in_asset_class
+            for instrument_code in list_of_instruments
         ]
 
-        aggregate_returns_across_asset_class = pd.concat(
-            aggregate_returns_across_asset_class, axis=1
+        aggregate_returns_across_instruments = pd.concat(
+            aggregate_returns_across_instruments_list, axis=1
         )
 
         # we don't ffill before working out the median as this could lead to
         # bad data
-        median_returns = aggregate_returns_across_asset_class.median(axis=1)
+        median_returns = aggregate_returns_across_instruments.median(axis=1)
 
         return median_returns
 
     @diagnostic()
-    def _by_asset_class_daily_vol_normalised_price_for_asset_class(self, asset_class: str) -> pd.Series:
+    def _daily_vol_normalised_price_for_list_of_instruments(
+        self, list_of_instruments: list
+    ) -> pd.Series:
+
+        norm_returns = \
+            self._aggregate_daily_vol_normalised_returns_for_list_of_instruments(list_of_instruments)
+        norm_price = norm_returns.cumsum()
+
+        return norm_price
+
+
+    @diagnostic()
+    def _by_asset_class_daily_vol_normalised_price_for_asset_class(
+        self, asset_class: str
+    ) -> pd.Series:
         """
         Price for an asset class, built up from cumulative returns
 
@@ -308,9 +342,11 @@ class RawData(SystemStage):
         :return: pd.Series
         """
 
-        norm_returns = self._aggregate_daily_vol_normalised_returns_for_asset_class(
-            asset_class)
-        norm_price = norm_returns.cumsum()
+        instruments_in_asset_class = self.data_stage.all_instruments_in_asset_class(
+            asset_class
+        )
+
+        norm_price = self._daily_vol_normalised_price_for_list_of_instruments(instruments_in_asset_class)
 
         return norm_price
 
@@ -322,21 +358,21 @@ class RawData(SystemStage):
         :return:
         """
 
-        asset_class = self.data_stage.asset_class_for_instrument(
-            instrument_code)
+        asset_class = self.data_stage.asset_class_for_instrument(instrument_code)
         normalised_price_for_asset_class = (
             self._by_asset_class_daily_vol_normalised_price_for_asset_class(asset_class)
         )
-        normalised_price_this_instrument = self.get_cumulative_daily_vol_normalised_returns(
-            instrument_code)
+        normalised_price_this_instrument = (
+            self.get_cumulative_daily_vol_normalised_returns(instrument_code)
+        )
 
         # Align for an easy life
         # As usual forward fill at last moment
         normalised_price_for_asset_class = normalised_price_for_asset_class.reindex(
-            normalised_price_this_instrument.index).ffill()
+            normalised_price_this_instrument.index
+        ).ffill()
 
         return normalised_price_for_asset_class
-
 
     def rolls_per_year(self, instrument_code: str) -> int:
         return self.parent.data.get_rolls_per_year(instrument_code)
@@ -364,8 +400,12 @@ class RawData(SystemStage):
         2015-12-11 19:33:39  97.9875    NaN         201812         201903
         """
 
-        instrcarrydata = self.parent.data.get_instrument_raw_carry_data(
-            instrument_code)
+        instrcarrydata = self.parent.data.get_instrument_raw_carry_data(instrument_code)
+        if len(instrcarrydata) == 0:
+            raise Exception(
+                "Data for %s not found! Remove from instrument list, or add to config.ignore_instruments"
+                % instrument_code
+            )
 
         instrcarrydata = rawCarryData(instrcarrydata)
 
@@ -503,8 +543,7 @@ class RawData(SystemStage):
         return raw_carry
 
     @output()
-    def smoothed_carry(self, instrument_code: str,
-                       smooth_days: int=90) -> pd.Series:
+    def smoothed_carry(self, instrument_code: str, smooth_days: int = 90) -> pd.Series:
         """
         Returns the smoothed raw carry
         Added to rawdata to support relative carry trading rule
@@ -520,9 +559,9 @@ class RawData(SystemStage):
         return smooth_carry
 
     @diagnostic()
-    def _by_asset_class_median_carry_for_asset_class(self,
-                                                     asset_class: str,
-                                                     smooth_days: int=90) -> pd.Series:
+    def _by_asset_class_median_carry_for_asset_class(
+        self, asset_class: str, smooth_days: int = 90
+    ) -> pd.Series:
         """
 
         :param asset_class:
@@ -530,7 +569,8 @@ class RawData(SystemStage):
         """
 
         instruments_in_asset_class = self.parent.data.all_instruments_in_asset_class(
-            asset_class)
+            asset_class
+        )
 
         raw_carry_across_asset_class = [
             self.raw_carry(instrument_code)
@@ -541,8 +581,9 @@ class RawData(SystemStage):
             raw_carry_across_asset_class, axis=1
         )
 
-        smoothed_carrys_across_asset_class = \
-            raw_carry_across_asset_class_pd.ewm(smooth_days).mean()
+        smoothed_carrys_across_asset_class = raw_carry_across_asset_class_pd.ewm(
+            smooth_days
+        ).mean()
 
         # we don't ffill before working out the median as this could lead to
         # bad data
@@ -560,10 +601,8 @@ class RawData(SystemStage):
         :return: pd.Series
         """
 
-        asset_class = self.parent.data.asset_class_for_instrument(
-            instrument_code)
-        median_carry = self._by_asset_class_median_carry_for_asset_class(
-            asset_class)
+        asset_class = self.parent.data.asset_class_for_instrument(instrument_code)
+        median_carry = self._by_asset_class_median_carry_for_asset_class(asset_class)
         instrument_carry = self.raw_carry(instrument_code)
 
         # Align for an easy life
@@ -602,8 +641,8 @@ class RawData(SystemStage):
 
         return daily_prices
 
+
 if __name__ == "__main__":
     import doctest
 
     doctest.testmod()
-

@@ -1,5 +1,34 @@
 # Release notes
 
+## Version 1.13
+
+- Better documentation of instrument handling
+- Customised ability to set instrument lists in sim
+- Requires python 3.7 to 3.9
+- Tweaks to dynamic optimisation
+- Dashboard improvements
+
+## Version 1.12
+
+- Added more flexible instrument exclusion, recommended lists of instruments
+- Refactored reporting code so uses common API
+- Suggestions for updating slippage cost estimates
+- Added buffering to dynamic optimisation code
+
+
+## Version 1.11
+
+- Added dashboard (thanks James!)
+- Aligned production and backtesting risk calculation code
+- More refactoring of production risk code
+- Simplified risk report
+
+## Version 1.10
+
+- Added dynamic optimisation code (thanks Doug!)
+- Added leverage constraint to autopopulate limits and trades
+- Started reorganising production risk code
+
 ## Version 1.06
 
 - Removed FuturesRawData, just use RawData now

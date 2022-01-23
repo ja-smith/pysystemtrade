@@ -11,12 +11,24 @@ import numpy as np
 import datetime
 import functools
 
+
+def true_if_answer_is_yes(prompt=""):
+    invalid = True
+    while invalid:
+        x = input(prompt)
+        x = x.lower()
+        if x[0] == "y":
+            return True
+        elif x[0] == "n":
+            return False
+        print("Need one of yes/no, Yes/No, y/n, Y/N")
+
+
 def flatten_list(some_list):
-    flattened = [
-        item for sublist in some_list for item in sublist
-    ]
+    flattened = [item for sublist in some_list for item in sublist]
 
     return flattened
+
 
 class not_required_flag(object):
     def __repr__(self):
@@ -44,8 +56,9 @@ def group_dict_from_natural(dict_group):
     if len(dict_group) == 0:
         return dict()
 
-    all_names = sorted(set(sum([dict_group[groupname]
-                                for groupname in dict_group.keys()], [])))
+    all_names = sorted(
+        set(sum([dict_group[groupname] for groupname in dict_group.keys()], []))
+    )
 
     def _return_without(name, group):
         if name in group:
@@ -67,8 +80,7 @@ def group_dict_from_natural(dict_group):
         ans = ans[0]
         return ans
 
-    gdict = dict([(name, _return_group(name, dict_group))
-                  for name in all_names])
+    gdict = dict([(name, _return_group(name, dict_group)) for name in all_names])
 
     return gdict
 
@@ -77,8 +89,6 @@ def str2Bool(x):
     if isinstance(x, bool):
         return x
     return x.lower() in ("t", "true")
-
-
 
 
 def str_of_int(x):
@@ -169,7 +179,6 @@ def value_or_npnan(x, return_value=None):
     return x
 
 
-
 def are_dicts_equal(d1, d2):
     d1_keys = set(d1.keys())
     d2_keys = set(d2.keys())
@@ -180,6 +189,9 @@ def are_dicts_equal(d1, d2):
     if len(same) != len(d1_keys):
         return False
     return True
+
+
+PROGRESS_EXP_FACTOR = 0.9
 
 
 class progressBar(object):
@@ -197,12 +209,13 @@ class progressBar(object):
     """
 
     def __init__(
-            self,
-            range_to_iter,
-            suffix="Progress",
-            toolbar_width=80,
-            show_each_time=False,
-            show_timings = False):
+        self,
+        range_to_iter,
+        suffix="Progress",
+        toolbar_width=80,
+        show_each_time=False,
+        show_timings=True,
+    ):
 
         self._start_time = time.time()
         self.toolbar_width = toolbar_width
@@ -216,41 +229,37 @@ class progressBar(object):
 
         self.display_bar()
 
-
     def estimated_time_remaining(self):
         total_iter = self.range_to_iter
         iter_left = total_iter - self.current_iter
-        time_per_iter = self.time_per_iteration()
+        time_per_iter = self.current_estimate_of_times
+        if time_per_iter is None:
+            return 0
 
         return iter_left * time_per_iter
 
-    def time_per_iteration(self) -> float:
-        list_of_time_per_iter = self.list_of_time_per_iter()
-        return np.mean(list_of_time_per_iter[-10:])
+    def update_time_estimate(self):
+        ## don't maintain a list per se, instead exponential
+        time_since_last_call = self.time_since_last_called()
+        current_estimate = self.current_estimate_of_times
+        if current_estimate is None:
+            ## seed
+            current_estimate = time_since_last_call
+        else:
+            current_estimate = ((1 - PROGRESS_EXP_FACTOR) * time_since_last_call) + (
+                PROGRESS_EXP_FACTOR * current_estimate
+            )
 
-    def list_of_time_per_iter(self):
-        list_of_time_per_iter = getattr(self, "_list_of_time_per_iter", [])
-        list_of_time_per_iter.append(self.time_per_iter_since_last_call())
-        self._list_of_time_per_iter = list_of_time_per_iter
+        self.current_estimate_of_times = current_estimate
 
-        return list_of_time_per_iter
+    @property
+    def current_estimate_of_times(self) -> float:
+        current_estimate = getattr(self, "_current_estimate_of_times", None)
+        return current_estimate
 
-    def time_per_iter_since_last_call(self) -> float:
-        iter_since_last_called = self.iter_since_last_called()
-
-        if iter_since_last_called==0:
-            return 0.0
-
-        time_since_last_called = self.time_since_last_called()
-
-        return time_since_last_called / iter_since_last_called
-
-
-    def iter_since_last_called(self) -> int:
-        iter_of_last_call = self.get_and_set_iter_of_last_call()
-        current_iter = self.current_iter
-
-        return current_iter - iter_of_last_call
+    @current_estimate_of_times.setter
+    def current_estimate_of_times(self, current_estimate: float):
+        self._current_estimate_of_times = current_estimate
 
     def time_since_last_called(self) -> float:
         time_of_last_call = self.get_and_set_time_of_last_call()
@@ -264,13 +273,6 @@ class progressBar(object):
 
         return time_of_last_iter
 
-
-    def get_and_set_iter_of_last_call(self):
-        last_iter = copy(getattr(self, "_iter_of_last_call", 0))
-        self._iter_of_last_call = self.current_iter
-
-        return last_iter
-
     def elapsed_time(self):
         return self.current_time - self.start_time
 
@@ -282,9 +284,9 @@ class progressBar(object):
     def current_time(self):
         return time.time()
 
-
     def iterate(self):
         self.current_iter += 1
+        self.update_time_estimate()
         if self.number_of_blocks_changed() or self._show_each_time:
             self.display_bar()
 
@@ -295,10 +297,7 @@ class progressBar(object):
         return int(self.current_iter / self.range_per_block)
 
     def how_many_blocks_left(self):
-        return int(
-            (self.range_to_iter -
-             self.current_iter) /
-            self.range_per_block)
+        return int((self.range_to_iter - self.current_iter) / self.range_per_block)
 
     def number_of_blocks_changed(self):
         original_blocks = self._how_many_blocks_displayed
@@ -310,24 +309,27 @@ class progressBar(object):
             return False
 
     def display_bar(self):
-        percents = round(
-            100.0 *
-            self.current_iter /
-            float(
-                self.range_to_iter),
-            1)
+        percents = round(100.0 * self.current_iter / float(self.range_to_iter), 1)
         if self._show_timings:
             time_remaining = self.estimated_time_remaining()
             time_elapsed = self.elapsed_time()
             total_est_time = time_elapsed + time_remaining
-            time_str = "(%.1f/%.1f/%.1f secs left/elapsed/total)" \
-                       % (time_remaining, time_elapsed, total_est_time)
+            time_str = "(%.1f/%.1f/%.1f secs left/elapsed/total)" % (
+                time_remaining,
+                time_elapsed,
+                total_est_time,
+            )
         else:
             time_str = ""
 
         bar = "=" * self.how_many_blocks_had() + "-" * self.how_many_blocks_left()
         progress_string = "\0\r [%s] %s%s %s %s\n" % (
-            bar, percents, "%", self.suffix, time_str)
+            bar,
+            percents,
+            "%",
+            self.suffix,
+            time_str,
+        )
         sys.stdout.write(progress_string)
         sys.stdout.flush()
         self._how_many_blocks_displayed = self.how_many_blocks_had()
@@ -481,6 +483,7 @@ def np_convert(val):
     :return: val as native type
     """
     return val.item() if isinstance(val, np.generic) else val
+
 
 if __name__ == "__main__":
     import doctest

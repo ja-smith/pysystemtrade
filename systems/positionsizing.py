@@ -8,6 +8,7 @@ from sysdata.config.configdata import Config
 from sysdata.sim.sim_data import simData
 from sysquant.estimators.vol import robust_vol_calc
 
+from systems.buffering import calculate_buffers, calculate_actual_buffers, apply_buffers_to_position
 from systems.stage import SystemStage
 from systems.system_cache import input, diagnostic, output
 from systems.forecast_combine import ForecastCombine
@@ -46,6 +47,39 @@ class PositionSizing(SystemStage):
     @property
     def name(self):
         return "positionSize"
+
+    @output()
+    def get_buffers_for_subsystem_position(self,
+                                           instrument_code: str) -> pd.Series:
+        """
+        Get buffers for subsystem
+
+        """
+
+        position = self.get_subsystem_position(instrument_code)
+        buffer = self.get_subsystem_buffers(instrument_code)
+
+        pos_buffers = apply_buffers_to_position(position=position, buffer=buffer)
+
+        return pos_buffers
+
+    @diagnostic()
+    def get_subsystem_buffers(self, instrument_code: str)\
+            -> pd.Series:
+
+        position = self.get_subsystem_position(instrument_code)
+
+        vol_scalar = self.get_volatility_scalar(instrument_code)
+        log = self.log
+        config = self.config
+
+        buffer = calculate_buffers(instrument_code=instrument_code,
+                                   position=position,
+                                   log=log,
+                                   config = config,
+                                   vol_scalar = vol_scalar)
+
+        return buffer
 
     @output()
     def get_subsystem_position(self, instrument_code: str) -> pd.Series:
@@ -141,7 +175,6 @@ class PositionSizing(SystemStage):
 
         return vol_scalar
 
-
     @diagnostic()
     def get_instrument_value_vol(self, instrument_code: str) -> pd.Series:
         """
@@ -221,8 +254,7 @@ class PositionSizing(SystemStage):
         daily_perc_vol = self.get_price_volatility(instrument_code)
 
         ## FIXME WHY NOT RESAMPLE?
-        (block_value, daily_perc_vol) = block_value.align(
-            daily_perc_vol, join="inner")
+        (block_value, daily_perc_vol) = block_value.align(daily_perc_vol, join="inner")
 
         instr_ccy_vol = block_value.ffill() * daily_perc_vol
 
@@ -256,17 +288,14 @@ class PositionSizing(SystemStage):
 
         """
 
-        underlying_price = self.get_underlying_price(
-            instrument_code)
+        underlying_price = self.get_underlying_price(instrument_code)
         value_of_price_move = self.parent.data.get_value_of_block_price_move(
             instrument_code
         )
 
-        block_value =  underlying_price.ffill() * value_of_price_move * 0.01
+        block_value = underlying_price.ffill() * value_of_price_move * 0.01
 
         return block_value
-
-
 
     @diagnostic()
     def get_underlying_price(self, instrument_code: str) -> pd.Series:
@@ -315,7 +344,6 @@ class PositionSizing(SystemStage):
                 instrument_code
             )
 
-
         return underlying_price
 
     @property
@@ -328,7 +356,7 @@ class PositionSizing(SystemStage):
     def data(self) -> simData:
         return self.parent.data
 
-    @diagnostic()
+    @input
     def get_price_volatility(self, instrument_code: str) -> pd.Series:
         """
         Get the daily % volatility; If a rawdata stage exists from there; otherwise work it out
@@ -359,40 +387,12 @@ class PositionSizing(SystemStage):
         2015-12-10  0.055318
         2015-12-11  0.059724
         """
-        rawdata = self.rawdata_stage
-        if rawdata is missing_data:
-            daily_perc_vol = self.calculate_daily_percentage_vol(instrument_code)
-        else:
 
-            daily_perc_vol = rawdata.get_daily_percentage_volatility(
-                instrument_code
-            )
+        daily_perc_vol = self.rawdata_stage.get_daily_percentage_volatility(
+            instrument_code
+        )
 
         return daily_perc_vol
-
-    @diagnostic()
-    def calculate_daily_percentage_vol(self, instrument_code: str) -> pd.Series:
-        # backadjusted prices can be negative
-        underlying_price = self.get_underlying_price(instrument_code)
-
-        return_vol = self.calculate_daily_returns_vol(instrument_code)
-
-        daily_vol_as_ratio = return_vol / underlying_price
-        daily_perc_vol = 100.0 * daily_vol_as_ratio
-
-        return daily_perc_vol
-
-    @diagnostic()
-    def calculate_daily_returns_vol(self, instrument_code: str) -> pd.Series:
-        price = self._daily_prices_direct_from_data(instrument_code)
-        returns_vol = robust_vol_calc(price.diff())
-
-        return returns_vol
-
-    @input
-    def _daily_prices_direct_from_data(self, instrument_code: str) -> pd.Series:
-        price = self.data.daily_prices(instrument_code)
-        return price
 
     @diagnostic()
     def get_vol_target_dict(self) -> dict:
@@ -467,14 +467,12 @@ class PositionSizing(SystemStage):
 
     @input
     def get_notional_trading_capital(self) -> float:
-        notional_trading_capital = float(
-            self.config.notional_trading_capital)
+        notional_trading_capital = float(self.config.notional_trading_capital)
         return notional_trading_capital
 
     @input
     def get_percentage_vol_target(self):
         return float(self.config.percentage_vol_target)
-
 
     @diagnostic()
     def get_base_currency(self) -> str:
@@ -506,11 +504,9 @@ class PositionSizing(SystemStage):
         """
 
         base_currency = self.get_base_currency()
-        fx_rate = self.data.get_fx_for_instrument(
-            instrument_code, base_currency)
+        fx_rate = self.data.get_fx_for_instrument(instrument_code, base_currency)
 
         return fx_rate
-
 
     @input
     def get_combined_forecast(self, instrument_code: str) -> pd.Series:
@@ -540,6 +536,7 @@ class PositionSizing(SystemStage):
     @property
     def comb_forecast_stage(self) -> ForecastCombine:
         return self.parent.combForecast
+
 
 if __name__ == "__main__":
     import doctest
